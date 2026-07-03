@@ -1,0 +1,13 @@
+# common attacker / network config across all configurations
+# imported by each target's docker-compose.yml
+services:
+  attacker:
+    build: ./attacker
+    networks:
+      - exposed
+networks:
+  exposed: # network the attacker sees
+    internal: true
+  closed: # network between the target services
+    internal: true
+

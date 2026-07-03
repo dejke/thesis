@@ -1,0 +1,8 @@
+include: 
+  - ../../base.yml
+
+services:
+  juiceshop:
+    image: bkimminich/juice-shop
+    networks: 
+      - exposed

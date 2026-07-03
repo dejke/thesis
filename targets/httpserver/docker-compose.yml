@@ -1,0 +1,8 @@
+include:
+  - ../../base.yml
+
+services:
+  httpserver:
+    build: .
+    networks:
+      - exposed
