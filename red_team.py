@@ -28,6 +28,7 @@ class RedTeamState(TypedDict):
     target_repo_path: str
     model_output: dict
     logs: Annotated[list[str], operator.add]
+    loop_count: int
 
 class AgentState(TypedDict):
     conversation_history: list[str]
@@ -44,8 +45,15 @@ def strategist_node(state:RedTeamState):
 
     output = state.get("model_output")
     threat_model = output.get("threat_model")
-    model_out = "this is an attack strategy abc"
+    curr_loops = state.get("loop_count")
+
+    if curr_loops == 0:
+        model_out = "Initial attack strategy abc"
+    else:
+        model_out = f"Revised attack strategy version {curr_loops+1}"
+
     output["strategist"]= model_out
+
 
     return {"model_output": output, "logs": [f"Strategist: {model_out}\n(based on threat model: {threat_model})"]}
 
@@ -53,12 +61,21 @@ def executor_node(state:RedTeamState):
 
     output = state.get("model_output")
     strategy = output.get("strategist")
+    curr_loops = state.get("loop_count")
+
     model_out = "This is an execution report"
     output["executor"]= model_out
 
-    return {"model_output": output, "logs":[f"Followed attack strategy:\n{strategy}\nExecution report: {model_out}"]}
+    return {"model_output": output, "logs":[f"Followed attack strategy:\n{strategy}\nExecution report: {model_out}"], "loop_count": curr_loops+1}
 
-
+def should_continue(state:RedTeamState):
+    lc = state.get("loop_count")
+    if lc < 3:
+        print(f"Looping ({lc})")
+        return "Strategist"
+    print("Max loops reached. Exiting")
+    return "__end__"
+    
 
 builder = StateGraph(RedTeamState)
 
@@ -71,17 +88,26 @@ builder.add_node("Executor", executor_node)
 builder.add_edge(START, "ThreatModel")       
 builder.add_edge("ThreatModel", "Strategist") 
 builder.add_edge("Strategist", "Executor") 
-builder.add_edge("Executor", END)         
-
+      
+builder.add_conditional_edges(
+    "Executor",
+    should_continue,
+    {
+        "Strategist": "Strategist",  
+        "__end__": END               
+    }
+)
 
 graph = builder.compile()
 
 if __name__ == "__main__":
     initial_input = {
-        "model_output": {}
+        "model_output": {}, 
+        "loop_count": 0
     }
     
-    print("Triggering LangGraph agent sequence...")
     final_output = graph.invoke(initial_input)
     
-    print(final_output["model_output"])
+    print("Logs:")
+    for log in final_output.get("logs"):
+        print(log)
