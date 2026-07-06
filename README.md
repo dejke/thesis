@@ -4,6 +4,6 @@
 
 
 ### Requirements
-Python3
-Docker
-Docker Compose
+Python3 
+Docker 
+Docker Compose 
