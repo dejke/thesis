@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://api.ai.auth.axis.cloud/v1/passthrough",
+    "ANTHROPIC_AUTH_TOKEN": "",
+    "ANTHROPIC_SMALL_FAST_MODEL": "prisma_gemini_3_flash",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "prisma_gemini_3_flash",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "prisma_gemini_3_flash",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "prisma_gemini_3_flash"
+  },
+  "model": "prisma_default",
+  "theme": "dark",
+  "effortLevel": "low"
+}
