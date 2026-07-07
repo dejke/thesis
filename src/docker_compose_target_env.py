@@ -2,7 +2,7 @@
 mini-swe-agent Environment that owns a docker-compose stack.
 
 `compose up -d` on construction (readiness gated in code, NOT via --wait, so
-one-shot init containers don't false-fail), `compose down -v` on cleanup.
+one-shot init containers don't False-fail), `compose down -v` on cleanup.
 Commands are exec'd into the named agent-side service; target + networks come up
 with the stack.
 
@@ -27,12 +27,12 @@ SUBMIT_SENTINEL = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
 class DockerComposeTargetEnv:
     def __init__(
         self,
-        target,                  # value for ${target} in the compose include
+        target,                  # value for ${TARGET} in the compose include
         service="executor",      # agent-side service to exec into
-        compose_file="docker-compose.yml",
+        compose_file="docker/docker-compose.yml",
         project="pentest",       # caller sets this unique per stack for parallel runs
         timeout=30,              # per-command
-        ready_probe=none,        # optional shell cmd run in the agent container,
+        ready_probe=None,        # optional shell cmd run in the agent container,
                                  # polled until exit 0 (e.g. "curl -sf http://web:3000")
         ready_timeout=120,       # seconds to wait for the container / ready_probe
     ):
@@ -43,11 +43,11 @@ class DockerComposeTargetEnv:
         self.timeout = timeout
 
         self._client = docker.from_env()
-        self._exe = os.getenv("mswea_docker_executable", "docker")
+        self._exe = os.getenv("MSWEA_DOCKER_EXECUTABLE", "docker")
 
         r = self._compose("up", "-d")
         if r.returncode != 0:
-            raise runtimeerror(f"compose up failed:\n{r.stderr}")
+            raise RuntimeError(f"compose up failed:\n{r.stderr}")
 
         self._container = self._resolve_container(ready_timeout)
         if ready_probe:
@@ -57,15 +57,15 @@ class DockerComposeTargetEnv:
     def _compose(self, *args):
         return subprocess.run(
             [self._exe, "compose", "-p", self.project, "-f", self.compose_file, *args],
-            capture_output=true, text=true,
-            env={**os.environ, "target": self.target},  # compose guards ${target:?...}
+            capture_output=True, text=True,
+            env={**os.environ, "TARGET": self.target},  # compose guards ${TARGET:?...}
         )
 
     def _resolve_container(self, ready_timeout):
         # label-scoped (project+service). up -d returns before the container is
         # actually running, so retry until it appears.
         deadline = time.monotonic() + ready_timeout
-        while true:
+        while True:
             cs = self._client.containers.list(filters={"label": [
                 f"com.docker.compose.project={self.project}",
                 f"com.docker.compose.service={self.service}",
@@ -73,18 +73,18 @@ class DockerComposeTargetEnv:
             if cs:
                 return cs[0]
             if time.monotonic() > deadline:
-                raise runtimeerror(
+                raise RuntimeError(
                     f"service '{self.service}' never came up in project '{self.project}'"
                 )
             time.sleep(0.5)
 
     def _wait_ready(self, probe, ready_timeout):
         deadline = time.monotonic() + ready_timeout
-        while true:
+        while True:
             if self._container.exec_run(["timeout", "10", "bash", "-lc", probe]).exit_code == 0:
                 return
             if time.monotonic() > deadline:
-                raise runtimeerror(f"ready_probe never passed: {probe}")
+                raise RuntimeError(f"ready_probe never passed: {probe}")
             time.sleep(1)
 
     def cleanup(self):
@@ -110,7 +110,7 @@ class DockerComposeTargetEnv:
         ]
 
     # ---- the seam mini calls -------------------------------------------
-    def execute(self, action, cwd="", *, timeout=none):
+    def execute(self, action, cwd="", *, timeout=None):
         # mirrors mini dockerenvironment.execute: input key is "command", errors
         # are wrapped into the dict (not raised), and the submit sentinel raises.
         command = action.get("command", "") if isinstance(action, dict) else str(action)
@@ -118,14 +118,14 @@ class DockerComposeTargetEnv:
         cmd = [self._exe, "exec", "-w", cwd, self._container.id, "bash", "-lc", command]
         try:
             result = subprocess.run(
-                cmd, text=true, timeout=timeout or self.timeout,
+                cmd, text=True, timeout=timeout or self.timeout,
                 encoding="utf-8", errors="replace",
-                stdout=subprocess.pipe, stderr=subprocess.stdout,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             )
             output = {"output": result.stdout, "returncode": result.returncode,
                       "exception_info": ""}
-        except exception as e:
-            raw = getattr(e, "output", none)
+        except Exception as e:
+            raw = getattr(e, "output", None)
             raw = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else (raw or "")
             output = {"output": raw, "returncode": -1,
                       "exception_info": f"error executing command: {e}"}
@@ -133,10 +133,10 @@ class DockerComposeTargetEnv:
         return output
 
     def _check_finished(self, output):
-        lines = output.get("output", "").lstrip().splitlines(keepends=true)
-        if lines and lines[0].strip() == submit_sentinel and output["returncode"] == 0:
+        lines = output.get("output", "").lstrip().splitlines(keepends=True)
+        if lines and lines[0].strip() == SUBMIT_SENTINEL and output["returncode"] == 0:
             submission = "".join(lines[1:])
-            raise submitted({
+            raise Submitted({
                 "role": "exit",
                 "content": submission,
                 "extra": {"exit_status": "submitted", "submission": submission},
