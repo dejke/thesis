@@ -1,0 +1,27 @@
+include:
+  - targets/${TARGET:?Set TARGET to a target name}/target.yml
+
+services:
+  executor:
+    build: ./executor
+    container_name: executor
+    volumes:
+      - target-src:/target-src:ro
+    networks:
+      - exposed
+
+  threat-modeler:
+    build: ./threat-modeler
+    container_name: threat-modeler
+    volumes:
+      - target-src:/target-src:ro
+networks:
+  exposed:
+    internal: true
+  closed:
+    internal: true
+  default:
+    internal: true # just in case something is misconfigured we don't want it networked
+
+volumes:
+  target-src:
