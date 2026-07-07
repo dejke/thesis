@@ -8,6 +8,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from claude_agent_sdk import ClaudeAgentOptions, query
 from pathlib import Path
 from dotenv import load_dotenv
+from prompts import threat_modeler_prompt, strategist_prompt, executor_prompt
 import asyncio
 
 
@@ -19,7 +20,6 @@ BASE_URL = os.getenv("BASE_URL")
 API_KEY = os.getenv("API_KEY")
 MAX_EXECUTION_LOOPS =  2
 
-
 model = ChatOpenAI(
     base_url=BASE_URL,  
     api_key=API_KEY,
@@ -27,8 +27,13 @@ model = ChatOpenAI(
     temperature=0.7,
 )
 
+""" class ClaudeAgentConfig(TypedDict):
+    agent_name: str
+    tools: list """
+
+
 class RedTeamState(TypedDict):
-    target_repo_path: str
+    target_path: Path
     model_output: dict
     logs: Annotated[list[str], operator.add]
     loop_count: int
@@ -38,15 +43,13 @@ class RedTeamState(TypedDict):
 async def threat_model_node(state: RedTeamState):
 
     output = state.get("model_output")
-
-    with open(Path(HERE.parent,"prompts", "tool_users","threat_modeler.md")) as f:
-        sp = f.read()
+    target_path = state.get("target_path")
 
     messages = []
 
     async for message in query(
         prompt="Scan the target software and make a threat model",
-        options=ClaudeAgentOptions(system_prompt=sp,cwd=str(Path(HERE.parent, "target"))),
+        options=ClaudeAgentOptions(system_prompt=threat_modeler_prompt,cwd=str(target_path)),
     ):
        messages.append(message)
 
@@ -55,27 +58,26 @@ async def threat_model_node(state: RedTeamState):
     output["threat_model"] =  final_msg.result
     print(f"THREAT MODEL:\n{final_msg.result}\n\n")
     
-    return {"target_repo_path": "target/path", "model_output": output, "logs": ["Threat model: Made a threat model"]}
+    return {"model_output": output, "logs": ["Threat model: Made a threat model"]}
 
 
 def strategist_node(state:RedTeamState):
 
     output = state.get("model_output")
+    curr_loops = state.get("loop_count")
+    target_path = state.get("target_path")
     threat_model = output.get("threat_model")
     report = output.get("executor")
-    curr_loops = state.get("loop_count")
 
-    with open(Path(HERE.parent,"prompts","basic", "strategist.md")) as f:
-        sp = f.read()
 
     if curr_loops == 0:
         response = model.invoke([
-        SystemMessage(content=sp,cwd=str(Path(HERE.parent, "target"))),
+        SystemMessage(content=strategist_prompt,cwd=str(target_path)),
         HumanMessage(content=f"Create an actionable attack plan to exploit the vulnerabilites outlined in the following threat model:\n{threat_model}")
     ])
     else:
         response = model.invoke([
-        SystemMessage(content=sp,cwd=str(Path(HERE.parent, "target"))),
+        SystemMessage(content=strategist_prompt,cwd=str(target_path)),
         HumanMessage(content=f"Based on the intitial threat model:\n{threat_model}\n,and this execution report:\n{report}\nCome up with a new attack plan")
     ])
         
@@ -89,17 +91,15 @@ def strategist_node(state:RedTeamState):
 async def executor_node(state: RedTeamState):
 
     output = state.get("model_output")
-    strategy = output.get("strategist")
     curr_loops = state.get("loop_count")
-
-    with open(Path(HERE.parent,"prompts", "tool_users","executor.md")) as f:
-        sp = f.read()
+    target_path = state.get("target_path")
+    strategy = output.get("strategist")
 
     messages = []
 
     async for message in query(
         prompt=f"Follow and execute the following attack plan:\n{strategy}",
-        options=ClaudeAgentOptions(system_prompt=sp,cwd=str(Path(HERE.parent, "target"))),
+        options=ClaudeAgentOptions(system_prompt=executor_prompt,cwd = str(target_path))
     ):
         messages.append(message)
     
@@ -142,11 +142,10 @@ builder.add_conditional_edges(
 graph = builder.compile()
 
 async def main():
-    print("main...")
     initial_input = {
         "model_output": {}, 
         "loop_count": 0,
-        "target_repo_path": f"{HERE.parent}/target",
+        "target_path": f"{HERE.parent}/target",
         "current_agent": "threat_modeler"
     }
     
