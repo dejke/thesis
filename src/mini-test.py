@@ -24,7 +24,7 @@ HERE = Path(__file__).resolve()
 BASE_URL = os.getenv("BASE_URL")
 API_KEY = os.getenv("API_KEY")
 MAX_EXECUTION_LOOPS =  2
-print(BASE_URL)
+
 class RedTeamState(TypedDict):
     target_path: str
     model_output: dict
