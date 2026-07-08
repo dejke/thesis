@@ -2,15 +2,17 @@
 mini-swe-agent Environment that owns a docker-compose stack.
 
 `compose up -d` on construction (readiness gated in code, NOT via --wait, so
-one-shot init containers don't False-fail), `compose down -v` on cleanup.
+one-shot init containers don't false-fail), `compose down -v` on cleanup.
 Commands are exec'd into the named agent-side service; target + networks come up
 with the stack.
 
-Duck-typed: mini needs `.execute(action, cwd="", *, timeout=None)` returning
-{"output", "returncode", "exception_info"} plus the COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT
-submit convention. The execute body mirrors mini's DockerEnvironment.execute
-(installed version) — re-check if you upgrade mini. Your system prompt MUST tell
-the model to emit the sentinel as the first line of a command to finish.
+Duck-typed against mini's v2 Environment protocol: implements `execute`,
+`get_template_vars`, and `serialize` (all three are called by DefaultAgent), plus
+the COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT submit convention. The execute body
+mirrors mini 2.4.5's DockerEnvironment.execute (input key "command", errors
+wrapped into the dict, sentinel raises Submitted) — re-check if you upgrade mini.
+Your system prompt MUST tell the model to emit the sentinel as the first line of
+a command to finish.
 """
 
 import os
@@ -96,6 +98,28 @@ class DockerComposeTargetEnv:
     def __exit__(self, *exc):
         self.cleanup()
 
+    # ---- mini v2 env protocol (besides execute) -------------------------
+    def get_template_vars(self) -> dict:
+        # Merged into the Jinja context when the agent renders system/instance
+        # templates. No env placeholders are required, so these are just handy
+        # extras ({{target}}, {{service}}, ...) if you want them.
+        return {
+            "target": self.target,
+            "service": self.service,
+            "project": self.project,
+            "cwd": "/",
+        }
+
+    def serialize(self) -> dict:
+        # What the agent records about the env in the saved trajectory.
+        return {"info": {"config": {
+            "environment_type": f"{type(self).__module__}.{type(self).__name__}",
+            "target": self.target,
+            "service": self.service,
+            "project": self.project,
+            "compose_file": self.compose_file,
+        }}}
+
     # ---- introspection --------------------------------------------------
     def target_hostnames(self):
         # service names on `exposed` (minus the agent's own) == dns hostnames the
@@ -111,7 +135,7 @@ class DockerComposeTargetEnv:
 
     # ---- the seam mini calls -------------------------------------------
     def execute(self, action, cwd="", *, timeout=None):
-        # mirrors mini dockerenvironment.execute: input key is "command", errors
+        # mirrors mini DockerEnvironment.execute: input key is "command", errors
         # are wrapped into the dict (not raised), and the submit sentinel raises.
         command = action.get("command", "") if isinstance(action, dict) else str(action)
         cwd = cwd or "/"
@@ -141,4 +165,3 @@ class DockerComposeTargetEnv:
                 "content": submission,
                 "extra": {"exit_status": "submitted", "submission": submission},
             })
-

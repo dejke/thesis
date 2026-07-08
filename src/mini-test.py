@@ -5,15 +5,15 @@ from typing import TypedDict, Annotated
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import SystemMessage, HumanMessage
-from claude_agent_sdk import ClaudeAgentOptions, query
 from pathlib import Path
 from dotenv import load_dotenv
 from prompts import threat_modeler_prompt, strategist_prompt, executor_prompt
 import asyncio
 
 from minisweagent.models.litellm_model import LitellmModel
-from minisweagent.environments.docker import DockerEnvironment
 from minisweagent.agents.default import DefaultAgent
+
+from docker_compose_target_env import DockerComposeTargetEnv
 
 """ import logging
 logging.basicConfig(level=logging.INFO)
@@ -24,7 +24,7 @@ HERE = Path(__file__).resolve()
 BASE_URL = os.getenv("BASE_URL")
 API_KEY = os.getenv("API_KEY")
 MAX_EXECUTION_LOOPS =  2
-
+print(BASE_URL)
 class RedTeamState(TypedDict):
     target_path: str
     model_output: dict
@@ -46,10 +46,10 @@ def threat_model_node(state: RedTeamState):
         cost_tracking="ignore_errors"
     )
 
-    environment = DockerEnvironment(
-        image="attacker-sandbox",
-        cwd = "/data",
-        run_args=["--rm", "-v", f"{target_path}:/data:ro"]
+    environment = DockerComposeTargetEnv(
+        target = "juiceshop",
+        service = "threat-modeler",
+        compose_file=str(HERE.parent.parent / "docker" / "docker-compose.yml")
     )
 
     system_template = (
@@ -64,13 +64,13 @@ def threat_model_node(state: RedTeamState):
     agent = DefaultAgent(
         model=model,
         env=environment,
-        step_limit=3,
+        step_limit=100,
         system_template=system_template,
         instance_template=instance_template
     )
 
     try:
-        res = agent.run(task="Read /data/testfile.md and follow the instructions there")
+        res = agent.run(task="Read the source code at /target-src and construct a detailed threat model of the software")
         print(res)  
         """ for m in agent.messages:
             print(m.get("role"), "->", m.get("content"))
