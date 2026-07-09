@@ -9,7 +9,7 @@ class AgentConfig:
     model_name: str
     system_prompt: str
     temperature: float
-    needs_docker: bool
+    docker_agent: str
     task: Optional[str] = None
     step_limit: Optional[int] = None
 
@@ -18,10 +18,10 @@ threat_modeler = AgentConfig(
     name="threat_modeler",
     model_name="openai/prisma_gemini_3_flash",
     system_prompt=threat_modeler_prompt,
-    task="Analyze the source code of the target software at {target_path} to produce a threat model",
+    task="Analyze the source code of the target software at /target-src/ to produce a threat model",
     temperature=0.7,
     step_limit=20,
-    needs_docker=True,
+    docker_agent="threat-modeler"
 )
 
 strategist = AgentConfig(
@@ -30,7 +30,7 @@ strategist = AgentConfig(
     system_prompt=strategist_prompt,
     temperature=0.7,
     step_limit=30,
-    needs_docker=False,
+    docker_agent="strategist"
 )
 
 executor = AgentConfig(
@@ -40,5 +40,5 @@ executor = AgentConfig(
     task="Follow the attack strategy below and attempt exploting vulnerabilites:\n{strategy}",
     temperature=0.7,
     step_limit=30,
-    needs_docker=True,
+    docker_agent="executor"
 )

@@ -12,8 +12,9 @@ from agents import AgentConfig
 from agents import threat_modeler, strategist, executor
 import asyncio
 from minisweagent.models.litellm_model import LitellmModel
-from minisweagent.environments.docker import DockerEnvironment
 from minisweagent.agents.default import DefaultAgent
+
+from docker_compose_target_env import DockerComposeTargetEnv
 
 load_dotenv()
 
@@ -39,8 +40,7 @@ nlp_model = ChatOpenAI(
 
 
 class RedTeamState(TypedDict):
-    target_path: Path
-    target_path_docker: Path
+    target: str
     agent_output: dict
     logs: Annotated[list[str], operator.add]
     loop_count: int
@@ -48,7 +48,6 @@ class RedTeamState(TypedDict):
 
 def mini_swe_agent(state: RedTeamState, agent: AgentConfig):
 
-    target_path = state.get("target_path")
 
     model = LitellmModel(
         model_name=agent.model_name,
@@ -60,10 +59,9 @@ def mini_swe_agent(state: RedTeamState, agent: AgentConfig):
         cost_tracking="ignore_errors",
     )
 
-    docker_env = DockerEnvironment(
-        image="attacker-sandbox",
-        cwd="/data",
-        run_args=["--rm", "-v", f"{target_path}:/data:ro"],
+    docker_env = DockerComposeTargetEnv(
+        agent=agent.docker_agent,
+        target=state.get("target")
     )
 
     msa_agent = DefaultAgent(
@@ -88,12 +86,9 @@ def mini_swe_agent(state: RedTeamState, agent: AgentConfig):
 def threat_model_node(state: RedTeamState):
 
     output = state.get("agent_output")
-    target_path = state.get("target_path")
-    target_path_docker = state.get("target_path_docker")
-    agent, env = mini_swe_agent(state, threat_modeler)
-
     try:
-        res = agent.run(task=threat_modeler.task.format(target_path=target_path_docker))
+        agent, env = mini_swe_agent(state, threat_modeler)
+        res = agent.run(task=threat_modeler.task)
     finally:
         env.cleanup()
 
@@ -131,9 +126,8 @@ def strategist_node(state: RedTeamState):
 
     output = state.get("agent_output")
     strategist.task = build_strategist_task(state)
-    agent, env = mini_swe_agent(state, strategist)
-
     try:
+        agent, env = mini_swe_agent(state, strategist)
         res = agent.run(task=strategist.task)
     finally:
         env.cleanup()
@@ -148,10 +142,9 @@ def executor_node(state: RedTeamState):
     output = state.get("agent_output")
     curr_loops = state.get("loop_count")
 
-    agent, env = mini_swe_agent(state, executor)
-    strategy = output.get("strategist")
-
     try:
+        agent, env = mini_swe_agent(state, executor)
+        strategy = output.get("strategist")
         res = agent.run(task=executor.task.format(strategy=strategy))
     finally:
         env.cleanup()
@@ -185,14 +178,11 @@ builder.add_conditional_edges(
 
 graph = builder.compile()
 
-target_path = THESIS_PATH / "target_src"
-
 if __name__ == "__main__":
     initial_input = {
         "agent_output": {},
         "loop_count": 0,
-        "target_path": target_path,
-        "target_path_docker": "/data",
+        "target": "juiceshop",
     }
 
     out = graph.invoke(initial_input)
