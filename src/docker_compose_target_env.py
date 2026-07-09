@@ -29,6 +29,8 @@ class DockerComposeTargetEnv:
         timeout=30,              # per-command
         ready_probe=None,        # optional shell cmd run in the agent container,
                                  # polled until exit 0 (e.g. "curl -sf http://web:3000")
+                                 # ideally keep this at None and rely on docker healthchecks
+                                 # to block the --wait flag on construction istead
         ready_timeout=120,       # seconds to wait for the container / ready_probe
     ):
         self.target = target
@@ -40,7 +42,7 @@ class DockerComposeTargetEnv:
         self._client = docker.from_env()
         self._exe = os.getenv("MSWEA_DOCKER_EXECUTABLE", "docker")
 
-        r = self._compose("up", "-d")
+        r = self._compose("up", "-d", "--wait")
         if r.returncode != 0:
             raise RuntimeError(f"compose up failed:\n{r.stderr}")
 

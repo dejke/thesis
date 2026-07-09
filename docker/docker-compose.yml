@@ -1,5 +1,5 @@
 include:
-  - targets/${TARGET:?Set TARGET to a target name}/target.yml
+  - targets/${TARGET:-juiceshop}/target.yml
 
 services:
   executor:
@@ -8,11 +8,19 @@ services:
       - target-src:/target-src:ro
     networks:
       - exposed
+    depends_on: # Required for `docker compose up --wait` to not block infinitely when src-fetch has already exited
+      src-fetch:
+        condition: service_completed_successfully
+        required: false
 
   threat-modeler:
     build: ./threat-modeler
     volumes:
       - target-src:/target-src:ro
+    depends_on: # Required for `docker compose up --wait` to not block infinitely when src-fetch has already exited
+      src-fetch:
+        condition: service_completed_successfully
+        required: false
 networks:
   exposed:
     internal: true
@@ -21,3 +29,4 @@ networks:
 
 volumes:
   target-src:
+    name: ${TARGET:-juiceshop}-target-src
