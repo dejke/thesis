@@ -48,7 +48,6 @@ class RedTeamState(TypedDict):
 
 def mini_swe_agent(state: RedTeamState, agent: AgentConfig):
 
-
     model = LitellmModel(
         model_name=agent.model_name,
         temperature=agent.temperature,
@@ -60,8 +59,7 @@ def mini_swe_agent(state: RedTeamState, agent: AgentConfig):
     )
 
     docker_env = DockerComposeTargetEnv(
-        agent=agent.docker_agent,
-        target=state.get("target")
+        agent=agent.docker_agent, target=state.get("target")
     )
 
     msa_agent = DefaultAgent(
@@ -149,7 +147,7 @@ def executor_node(state: RedTeamState):
     finally:
         env.cleanup()
 
-    output["strategist"] = res
+    output["executor"] = res
 
     return {"agent_output": output, "loop_count": curr_loops + 1}
 
