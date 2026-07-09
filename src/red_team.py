@@ -5,12 +5,12 @@ from typing import TypedDict, Annotated
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import SystemMessage, HumanMessage
+from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 from agents import AgentConfig
 from agents import threat_modeler, strategist, executor
 import asyncio
-
 from minisweagent.models.litellm_model import LitellmModel
 from minisweagent.environments.docker import DockerEnvironment
 from minisweagent.agents.default import DefaultAgent
@@ -20,51 +20,66 @@ load_dotenv()
 HERE = Path(__file__).resolve()
 BASE_URL = os.getenv("BASE_URL")
 API_KEY = os.getenv("API_KEY")
-MAX_EXECUTION_LOOPS =  2
+MAX_EXECUTION_LOOPS = 2
+ts = datetime.now().strftime("%m%d_%H%M")
+THESIS_PATH = HERE.parent.parent
+TRAJECTORIES_PATH = THESIS_PATH / "msa-traj"
+
+print(f"tp: {TRAJECTORIES_PATH} ({type(TRAJECTORIES_PATH)})")
+
+os.makedirs(TRAJECTORIES_PATH, exist_ok=True)
+
 
 nlp_model = ChatOpenAI(
-    base_url=BASE_URL,  
+    base_url=BASE_URL,
     api_key=API_KEY,
     model="prisma_gemini_3_flash",
     temperature=0.7,
 )
 
+
 class RedTeamState(TypedDict):
     target_path: Path
+    target_path_docker: Path
     agent_output: dict
     logs: Annotated[list[str], operator.add]
     loop_count: int
 
-def mini_swe_agent(state:RedTeamState, agent: AgentConfig):
+
+def mini_swe_agent(state: RedTeamState, agent: AgentConfig):
 
     target_path = state.get("target_path")
 
     model = LitellmModel(
-        model_name = agent.model_name,
-        temperature = agent.temperature,
-        model_kwargs = {
+        model_name=agent.model_name,
+        temperature=agent.temperature,
+        model_kwargs={
             "api_base": os.getenv("BASE_URL"),
-            "api_key": os.getenv("API_KEY")
+            "api_key": os.getenv("API_KEY"),
         },
-        cost_tracking="ignore_errors"
+        cost_tracking="ignore_errors",
     )
 
     docker_env = DockerEnvironment(
-            image="attacker-sandbox",
-            cwd = "/data",
-            run_args=["--rm", "-v", f"{target_path}:/data:ro"]
-        )
-    
+        image="attacker-sandbox",
+        cwd="/data",
+        run_args=["--rm", "-v", f"{target_path}:/data:ro"],
+    )
+
     msa_agent = DefaultAgent(
         model=model,
         env=docker_env,
         step_limit=agent.step_limit,
-        system_template = agent.system_prompt,
-        instance_template = ("You are a helpful assistant that can interact with a computer via bash.\n"
-        "Respond with exactly one bash code block per turn.\n"
-        "When finished, run a command whose first output line is "
-        "'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT', followed by your final answer."
-        "{{task}}")
+        system_template=agent.system_prompt,
+        instance_template=(
+            "You have access to a bash tool to explore and analyze the codebase.\n"
+            "Work step by step: read relevant files, build up your understanding, "
+            "and use the bash tool for every action.\n\n"
+            "When you are done, call the bash tool one final time to run a command "
+            "whose first line of output is exactly 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT', "
+            "followed by your full threat model as the rest of the output.\n\n"
+            "Task: {{task}}"
+        ),
     )
 
     return msa_agent, docker_env
@@ -74,28 +89,30 @@ def threat_model_node(state: RedTeamState):
 
     output = state.get("agent_output")
     target_path = state.get("target_path")
+    target_path_docker = state.get("target_path_docker")
     agent, env = mini_swe_agent(state, threat_modeler)
 
-    try: 
-        res = agent.run(task=threat_modeler.task.format(target_path=target_path))
+    try:
+        res = agent.run(task=threat_modeler.task.format(target_path=target_path_docker))
     finally:
         env.cleanup()
 
-    output["threat_modeler"] = res
+    print(f"res: {res}")
+    agent.save(Path(TRAJECTORIES_PATH, f"tm_{ts}.json"))
+    output["threat_modeler"] = res.get("submission", f"No submisson. res: {res}")
 
     return {"agent_output": output}
 
 
-
 def build_strategist_task(state: RedTeamState):
-    
+
     out = state.get("agent_output")
     sections = [f"<threat_model>\n{out.get("threat_modeler")}\n</threat_model>"]
     report = out.get("executor")
 
     if report:
         sections.append(
-            f"<execution_trace iteration=\"{state.get("loop_count")}\">\n"
+            f'<execution_trace iteration="{state.get("loop_count")}">\n'
             f"{report}\n"
             f"</execution_trace>"
         )
@@ -110,13 +127,13 @@ def build_strategist_task(state: RedTeamState):
     return "\n\n".join(sections)
 
 
-def strategist_node(state:RedTeamState):
+def strategist_node(state: RedTeamState):
 
     output = state.get("agent_output")
     strategist.task = build_strategist_task(state)
     agent, env = mini_swe_agent(state, strategist)
 
-    try: 
+    try:
         res = agent.run(task=strategist.task)
     finally:
         env.cleanup()
@@ -134,53 +151,48 @@ def executor_node(state: RedTeamState):
     agent, env = mini_swe_agent(state, executor)
     strategy = output.get("strategist")
 
-    try: 
+    try:
         res = agent.run(task=executor.task.format(strategy=strategy))
     finally:
         env.cleanup()
 
     output["strategist"] = res
 
-    return {"agent_output": output, "loop_count": curr_loops+1}
+    return {"agent_output": output, "loop_count": curr_loops + 1}
 
 
-
-def should_continue(state:RedTeamState):
+def should_continue(state: RedTeamState):
     lc = state.get("loop_count")
     if lc < MAX_EXECUTION_LOOPS:
         return "Strategist"
     print("Max loops reached. Exiting")
     return "__end__"
-    
+
 
 builder = StateGraph(RedTeamState)
-
 
 builder.add_node("ThreatModel", threat_model_node)
 builder.add_node("Strategist", strategist_node)
 builder.add_node("Executor", executor_node)
 
+builder.add_edge(START, "ThreatModel")
+builder.add_edge("ThreatModel", "Strategist")
+builder.add_edge("Strategist", "Executor")
 
-builder.add_edge(START, "ThreatModel")       
-builder.add_edge("ThreatModel", "Strategist") 
-builder.add_edge("Strategist", "Executor") 
-      
 builder.add_conditional_edges(
-    "Executor",
-    should_continue,
-    {
-        "Strategist": "Strategist",  
-        "__end__": END               
-    }
+    "Executor", should_continue, {"Strategist": "Strategist", "__end__": END}
 )
 
 graph = builder.compile()
 
+target_path = THESIS_PATH / "target_src"
+
 if __name__ == "__main__":
     initial_input = {
-        "agent_output": {}, 
+        "agent_output": {},
         "loop_count": 0,
-        "target_path": "target_src"
+        "target_path": target_path,
+        "target_path_docker": "/data",
     }
 
     out = graph.invoke(initial_input)
