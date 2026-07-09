@@ -48,8 +48,7 @@ def threat_model_node(state: RedTeamState):
 
     environment = DockerComposeTargetEnv(
         target = "juiceshop",
-        service = "threat-modeler",
-        compose_file=str(HERE.parent.parent / "docker" / "docker-compose.yml")
+        agent = "threat-modeler",
     )
 
     system_template = (

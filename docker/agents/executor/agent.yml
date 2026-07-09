@@ -1,0 +1,6 @@
+
+services:
+  agent:
+    build: .
+    networks:
+      - exposed

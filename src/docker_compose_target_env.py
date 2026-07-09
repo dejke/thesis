@@ -5,74 +5,65 @@ docker compose up / down on init / cleanup
 
 coupled to docker compose config layout via args:
     'target' (target subfolder name)
-    'service' name of agent service in docker/docker-compose.yml
+    'agent' name of agent service in docker/compose.yaml
 """
 
 import os
 import subprocess
 import time
+import uuid
+from pathlib import Path
 
 import docker
 
 from minisweagent.exceptions import Submitted
 
 SUBMIT_SENTINEL = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
-
+COMPOSE_FILE = Path(__file__).resolve().parent.parent / "docker" / "compose.yaml"
 
 class DockerComposeTargetEnv:
     def __init__(
         self,
-        target,                  # value for ${TARGET} in the compose include
-        service="executor",      # agent-side service to exec into
-        compose_file="docker/docker-compose.yml",
-        project="pentest",       # caller sets this unique per stack for parallel runs
-        timeout=30,              # per-command
-        ready_probe=None,        # optional shell cmd run in the agent container,
-                                 # polled until exit 0 (e.g. "curl -sf http://web:3000")
-                                 # ideally keep this at None and rely on docker healthchecks
-                                 # to block the --wait flag on construction istead
-        ready_timeout=120,       # seconds to wait for the container / ready_probe
+        target="juiceshop",             # value for ${TARGET} in the compose include
+        agent="threat-modeler",       # value for ${AGENT} in the compose include
+        timeout=30,                     # per-command
+        ready_probe=None,               # optional shell cmd run in the agent container,
+                                        # polled until exit 0 (e.g. "curl -sf http://web:3000")
+                                        # ideally keep this at None and rely on docker healthchecks
+                                        # to block the --wait flag on construction istead
+        ready_timeout=120,              # seconds to wait for the container / ready_probe
     ):
         self.target = target
-        self.service = service
-        self.compose_file = compose_file
-        self.project = project
+        self.agent = agent
         self.timeout = timeout
+        self.project = f"{target}-{agent}-{uuid.uuid4().hex[:8]}"
 
         self._client = docker.from_env()
         self._exe = os.getenv("MSWEA_DOCKER_EXECUTABLE", "docker")
-
+        
         r = self._compose("up", "-d", "--wait")
         if r.returncode != 0:
             raise RuntimeError(f"compose up failed:\n{r.stderr}")
 
-        self._container = self._resolve_container(ready_timeout)
+        self._container = self._resolve_container()
         if ready_probe:
             self._wait_ready(ready_probe, ready_timeout)
 
     def _compose(self, *args):
         return subprocess.run(
-            [self._exe, "compose", "-p", self.project, "-f", self.compose_file, *args],
+            [self._exe, "compose", "-p", self.project, "-f", COMPOSE_FILE, *args],
             capture_output=True, text=True,
-            env={**os.environ, "TARGET": self.target},  # compose guards ${TARGET:?...}
+            env={**os.environ, "TARGET": self.target, "AGENT": self.agent},
         )
 
-    def _resolve_container(self, ready_timeout):
-        # label-scoped (project+service). up -d returns before the container is
-        # actually running, so retry until it appears.
-        deadline = time.monotonic() + ready_timeout
-        while True:
-            cs = self._client.containers.list(filters={"label": [
-                f"com.docker.compose.project={self.project}",
-                f"com.docker.compose.service={self.service}",
-            ]})
-            if cs:
-                return cs[0]
-            if time.monotonic() > deadline:
-                raise RuntimeError(
-                    f"service '{self.service}' never came up in project '{self.project}'"
-                )
-            time.sleep(0.5)
+    def _resolve_container(self):
+        cs = self._client.containers.list(filters={"label": [
+            f"com.docker.compose.project={self.project}",
+            "com.docker.compose.service=agent",
+        ]})
+        if not cs:
+            raise RuntimeError(f"agent container not found in project '{self.project}' after --wait")
+        return cs[0]
 
     def _wait_ready(self, probe, ready_timeout):
         deadline = time.monotonic() + ready_timeout
@@ -95,7 +86,7 @@ class DockerComposeTargetEnv:
     def get_template_vars(self) -> dict:
         return {
             "target": self.target,
-            "service": self.service,
+            "agent": self.agent,
             "project": self.project,
             "cwd": "/",
         }
@@ -104,9 +95,8 @@ class DockerComposeTargetEnv:
         return {"info": {"config": {
             "environment_type": f"{type(self).__module__}.{type(self).__name__}",
             "target": self.target,
-            "service": self.service,
+            "agent": self.agent,
             "project": self.project,
-            "compose_file": self.compose_file,
         }}}
 
     def target_hostnames(self):
@@ -118,7 +108,7 @@ class DockerComposeTargetEnv:
         })
         return [
             c.labels["com.docker.compose.service"] for c in cs
-            if c.labels.get("com.docker.compose.service") != self.service
+            if c.labels.get("com.docker.compose.service") != "agent"
         ]
 
     def execute(self, action, cwd="", *, timeout=None):

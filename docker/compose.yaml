@@ -1,0 +1,23 @@
+include:
+  - agents/${AGENT:-threat-modeler}/agent.yml
+  - targets/${TARGET:-juiceshop}/target.yml
+
+services:
+  agent:
+    volumes:
+      - target-src:/target-src:ro
+    depends_on: # Required for `docker compose up --wait` to not block infinitely when src-fetch has already exited
+      src-fetch:
+        condition: service_completed_successfully
+        required: false
+    labels:
+      agent.type: ${AGENT:-threat-modeler}
+
+networks:
+  exposed:
+    internal: true
+  closed:
+    internal: true
+
+volumes:
+  target-src: {}

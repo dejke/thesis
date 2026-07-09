@@ -17,5 +17,3 @@ services:
     volumes:
       - target-src:/target-src
 
-volumes:
-  target-src:
